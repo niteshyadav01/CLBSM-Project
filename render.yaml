@@ -2,12 +2,14 @@ services:
   - type: web
     name: clbsm
     runtime: node
-    buildCommand: npm ci --prefix backend && npm ci --prefix frontend && npm run build --prefix frontend
+    buildCommand: npm ci --omit=dev --prefix backend && npm ci --include=dev --prefix frontend && npm run build --prefix frontend
     startCommand: npm start --prefix backend
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: "20"
       - key: MONGODB_URI
         sync: false
       - key: JWT_SECRET

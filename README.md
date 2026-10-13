@@ -119,7 +119,7 @@ In Atlas, create the database user, allow the Render service to connect (IP acce
 
 The website and the API are served from the same address. Leave the root directory empty.
 
-- Build command: `npm ci --prefix backend && npm ci --prefix frontend && npm run build --prefix frontend`
+- Build command: `npm ci --omit=dev --prefix backend && npm ci --include=dev --prefix frontend && npm run build --prefix frontend`
 - Start command: `npm start --prefix backend`
 - Health check path: `/api/health`
 - Environment:

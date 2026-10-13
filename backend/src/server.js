@@ -19,7 +19,7 @@ try {
   await connectDB();
   await bootstrapProduction();
   const app = createApp();
-  server = app.listen(port, () => {
+  server = app.listen(port, '0.0.0.0', () => {
     console.log(`CLBSM API listening on port ${port}`);
   });
 } catch (error) {
