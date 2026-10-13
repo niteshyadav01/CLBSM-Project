@@ -94,7 +94,6 @@ export async function bootstrapProduction() {
   });
   console.log(`Created the production admin account ${username}.`);
 }
-
 export async function runSeed() {
   if (process.env.NODE_ENV === 'production') {
     await bootstrapProduction();
