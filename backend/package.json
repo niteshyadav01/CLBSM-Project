@@ -10,7 +10,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "seed": "node src/seed.js",
-    "test": "node --test --test-concurrency=1 --test-timeout=180000 src/tests/acceptance.test.js src/tests/reports.test.js src/tests/integration.test.js"
+    "test": "node --test --test-concurrency=1 --test-timeout=180000 src/tests/acceptance.test.js src/tests/reports.test.js src/tests/integration.test.js src/tests/runtimeConfig.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

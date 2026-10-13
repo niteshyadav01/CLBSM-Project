@@ -61,7 +61,7 @@ router.post(
     if (!user || !user.active) throw new AppError('Sign in again to change the password.', 401, 'UNAUTHORIZED');
     const matches = await bcrypt.compare(currentPassword, user.password);
     if (!matches) throw new AppError('The current password is incorrect.', 400, 'VALIDATION');
-    user.password = await bcrypt.hash(newPassword, 10);
+    user.password = await bcrypt.hash(newPassword, 12);
     await user.save();
     await logAudit({
       user: req.user,

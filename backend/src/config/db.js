@@ -2,13 +2,20 @@ import mongoose from 'mongoose';
 
 let transactionsSupported;
 
+export function normalizeMongoUri(uri) {
+  const parsed = new URL(uri);
+  if (parsed.pathname === '/' || parsed.pathname === '') parsed.pathname = '/clbsm';
+  return parsed.toString();
+}
+
 export async function connectDB(uri = process.env.MONGODB_URI) {
   if (!uri) {
     throw new Error('MONGODB_URI is required.');
   }
+  const target = normalizeMongoUri(uri);
   mongoose.set('strictQuery', true);
   if (mongoose.connection.readyState === 1) return mongoose.connection;
-  await mongoose.connect(uri);
+  await mongoose.connect(target, { serverSelectionTimeoutMS: 10_000 });
   return mongoose.connection;
 }
 

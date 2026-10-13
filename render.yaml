@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: clbsm-api
+    name: clbsm
     runtime: node
-    rootDir: backend
-    buildCommand: npm install
-    startCommand: npm start
+    buildCommand: npm ci --prefix backend && npm ci --prefix frontend && npm run build --prefix frontend
+    startCommand: npm start --prefix backend
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -14,7 +14,3 @@ services:
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 12h
-      - key: CLIENT_ORIGIN
-        sync: false
-      - key: SEED_ON_START
-        value: false

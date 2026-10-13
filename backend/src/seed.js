@@ -8,7 +8,10 @@ if (!process.env.MONGODB_URI) {
   process.exit(1);
 }
 
-await connectDB();
-await runSeed();
-await mongoose.disconnect();
-console.log('Seed complete.');
+try {
+  await connectDB();
+  await runSeed();
+  console.log('Seed complete.');
+} finally {
+  await mongoose.disconnect();
+}

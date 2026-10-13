@@ -108,7 +108,7 @@ export default function Login() {
             </button>
           </form>
           {import.meta.env.DEV && (
-            <p className="mt-4 text-center text-xs leading-5 text-stone-500">First sign-in: admin / Admin@12345. Change the password after you sign in.</p>
+            <p className="mt-4 text-center text-xs leading-5 text-stone-500">First sign-in: admin / admin#2026. Change the password after you sign in.</p>
           )}
         </div>
       </section>

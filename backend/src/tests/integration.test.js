@@ -85,6 +85,12 @@ describe('persisted stock, roles, and historical prices', () => {
     item = created.body.item;
   });
 
+  it('reports database readiness on the health endpoint', async () => {
+    const response = await request(app).get('/api/health');
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { ok: true, service: 'clbsm-api' });
+  });
+
   it('treats the first closing as opening stock and the next closing as that day’s sales', async () => {
     const firstDay = {
       date: '2026-01-15',

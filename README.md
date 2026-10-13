@@ -39,7 +39,6 @@ MONGODB_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/clbsm?retryWri
 JWT_SECRET=a-long-random-string-at-least-20-characters
 JWT_EXPIRES_IN=12h
 CLIENT_ORIGIN=http://localhost:5173
-SEED_ON_START=false
 ```
 
 3. Install and seed:
@@ -65,7 +64,7 @@ Change these passwords after the first sign-in.
 
 | Role | User | Password |
 |---|---|---|
-| Admin | admin | Admin@12345 |
+| Admin | admin | admin#2026 |
 
 There is one sign-in. Older manager and staff accounts are turned off the next time the server starts.
 
@@ -114,35 +113,24 @@ Use one Atlas database for every phone, tablet, and computer. Do not point produ
 
 ### Database
 
-In Atlas, create the database user, allow the Render service to connect (IP access or `0.0.0.0/0` only if you accept that exposure), and copy the SRV connection string. The path should include the database name `clbsm`.
+In Atlas, create the database user, allow the Render service to connect (IP access or `0.0.0.0/0` only if you accept that exposure), and copy the SRV connection string. If the string has no database name, the API uses `clbsm`. On Render, set `MONGODB_URI` to that full string. The local `.env` file is not uploaded.
 
-### API on Render
+### One Render web service
 
-`render.yaml` describes the web service. In the Render dashboard:
+The website and the API are served from the same address. Leave the root directory empty.
 
-- Root directory: `backend`
-- Build command: `npm install`
-- Start command: `npm start`
+- Build command: `npm ci --prefix backend && npm ci --prefix frontend && npm run build --prefix frontend`
+- Start command: `npm start --prefix backend`
+- Health check path: `/api/health`
 - Environment:
-  - `MONGODB_URI`
-  - `JWT_SECRET` (long random value)
-  - `JWT_EXPIRES_IN=12h`
-  - `CLIENT_ORIGIN` set to the exact frontend origin, for example `https://your-app.vercel.app`. Several origins can be comma-separated.
   - `NODE_ENV=production`
-  - `SEED_ON_START=true` for the first boot only, then set it back to `false` and redeploy
+  - `MONGODB_URI` — the Atlas connection string, including the database name `clbsm`
+  - `JWT_SECRET` — at least 32 random characters
+  - `JWT_EXPIRES_IN=12h`
 
-Alternatively, open the Render shell once and run `npm run seed`.
+Render’s own site address is allowed for sign-in. Set `CLIENT_ORIGIN` only when a browser on a different address must call this service.
 
-### Frontend on Vercel or Netlify
-
-- Root directory: `frontend`
-- Build command: `npm run build`
-- Output directory: `dist`
-- Environment variable, set before building: `VITE_API_URL=https://<your-api>.onrender.com/api`
-
-`frontend/vercel.json` and `frontend/netlify.toml` send unknown paths back to `index.html` so refreshing a page works.
-
-After the first deploy, sign in as admin, change the seed passwords, set the business name under Settings, and replace the sample bottle prices.
+The admin login `admin` / `admin#2026` is already in the database. A later start does not replace that password or add sample sales.
 
 ## API overview
 

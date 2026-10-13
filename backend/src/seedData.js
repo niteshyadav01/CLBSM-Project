@@ -10,7 +10,7 @@ import { addDays, todayISO } from './utils/dates.js';
 import { roundMoney } from '../../shared/stockCalculation.js';
 
 export const SEED_USERS = [
-  { name: 'Bar Admin', username: 'admin', password: 'Admin@12345', role: 'admin' },
+  { name: 'Bar Admin', username: 'admin', password: 'admin#2026', role: 'admin' },
 ];
 
 export async function ensureUsernames() {
@@ -57,8 +57,52 @@ function plan(unitsPerBox, low) {
   ];
 }
 
-export async function runSeed() {
+export async function bootstrapProduction() {
   await ensureUsernames();
+  if (process.env.NODE_ENV !== 'production') return;
+
+  const activeAdmin = await User.exists({ role: 'admin', active: true });
+  if (activeAdmin) return;
+
+  const seed = SEED_USERS[0];
+  const username = (process.env.INITIAL_ADMIN_USERNAME || seed.username).trim().toLowerCase();
+  const password = process.env.INITIAL_ADMIN_PASSWORD || seed.password;
+  if (!/^[a-zA-Z0-9._-]{3,40}$/.test(username)) {
+    throw new Error('INITIAL_ADMIN_USERNAME must be 3–40 letters, numbers, dots, underscores, or hyphens.');
+  }
+  if (password.length < 8) {
+    throw new Error('INITIAL_ADMIN_PASSWORD must contain at least 8 characters.');
+  }
+
+  const existing = await User.findOne({ username });
+  if (existing) {
+    if (existing.role !== 'admin') {
+      throw new Error('The admin user name belongs to a non-admin account.');
+    }
+    existing.active = true;
+    await existing.save();
+    console.log(`Activated the production admin account ${username}.`);
+    return;
+  }
+
+  await User.create({
+    name: process.env.INITIAL_ADMIN_NAME?.trim() || seed.name,
+    username,
+    password: await bcrypt.hash(password, 12),
+    role: 'admin',
+    active: true,
+  });
+  console.log(`Created the production admin account ${username}.`);
+}
+
+export async function runSeed() {
+  if (process.env.NODE_ENV === 'production') {
+    await bootstrapProduction();
+    return;
+  }
+
+  await ensureUsernames();
+
   const users = {};
   for (const seed of SEED_USERS) {
     let user = await User.findOne({ username: seed.username });

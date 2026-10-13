@@ -5,17 +5,19 @@ import react from '@vitejs/plugin-react';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@shared': path.resolve(__dirname, '../shared'),
+export default defineConfig(() => {
+  return {
+    plugins: [react()],
+    resolve: {
+      alias: {
+        '@shared': path.resolve(__dirname, '../shared'),
+      },
     },
-  },
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': 'http://localhost:5000',
+    server: {
+      port: 5173,
+      proxy: {
+        '/api': 'http://localhost:5000',
+      },
     },
-  },
+  };
 });
