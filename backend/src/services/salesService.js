@@ -1,3 +1,4 @@
+import { Item } from '../models/Item.js';
 import { DailyStock } from '../models/DailyStock.js';
 import { DailyCollection } from '../models/DailyCollection.js';
 import { roundMoney } from '../../../shared/stockCalculation.js';
@@ -8,22 +9,74 @@ import { logAudit } from './auditService.js';
 
 export async function getSalesDay(date) {
   if (!isISODate(date)) throw new AppError('Enter a valid date.', 400, 'VALIDATION');
-  const stocks = await DailyStock.find({ date }).populate('item', 'name sellingPrice').sort({ itemName: 1 });
-  const lines = stocks.map((record) => ({
-    id: String(record._id),
-    itemId: String(record.item?._id || record.item),
-    itemName: record.item?.name || record.itemName,
-    size: record.size,
-    unitsPerBox: record.unitsPerBox,
-    soldBottles: record.soldBottles,
-    sellingPrice: record.sellingPrice,
-    currentPrice: record.item?.sellingPrice ?? record.sellingPrice,
-    salesRevenue: record.salesRevenue,
-    openingTotal: record.openingTotal,
-    receivedTotal: record.receivedTotal,
-    closingTotal: record.closingTotal,
-    adjustmentBottles: record.adjustmentBottles,
-  }));
+  const stocks = await DailyStock.find({ date }).sort({ itemName: 1 }).lean();
+  const stockIds = stocks.map((record) => record.item);
+  const items = await Item.find({ $or: [{ active: true }, { _id: { $in: stockIds } }] }).sort({ name: 1 }).lean();
+  const stockByItem = new Map(stocks.map((record) => [String(record.item), record]));
+  const seen = new Set();
+  const lines = items.map((item) => {
+    seen.add(String(item._id));
+    const record = stockByItem.get(String(item._id));
+    if (!record) {
+      return {
+        id: String(item._id),
+        itemId: String(item._id),
+        itemName: item.name,
+        category: item.category,
+        size: item.size,
+        unitsPerBox: item.unitsPerBox,
+        soldBottles: 0,
+        sellingPrice: item.sellingPrice,
+        buyingPrice: item.buyingPrice ?? 0,
+        currentPrice: item.sellingPrice,
+        salesRevenue: 0,
+        openingTotal: 0,
+        receivedTotal: 0,
+        closingTotal: 0,
+        adjustmentBottles: 0,
+        counted: false,
+      };
+    }
+    return {
+      id: String(record._id),
+      itemId: String(item._id),
+      itemName: item.name || record.itemName,
+      category: item.category || record.category,
+      size: record.size,
+      unitsPerBox: record.unitsPerBox,
+      soldBottles: record.soldBottles,
+      sellingPrice: record.sellingPrice,
+      buyingPrice: item.buyingPrice ?? 0,
+      currentPrice: item.sellingPrice,
+      salesRevenue: record.salesRevenue,
+      openingTotal: record.openingTotal,
+      receivedTotal: record.receivedTotal,
+      closingTotal: record.closingTotal,
+      adjustmentBottles: record.adjustmentBottles,
+      counted: true,
+    };
+  });
+  for (const record of stocks) {
+    if (seen.has(String(record.item))) continue;
+    lines.push({
+      id: String(record._id),
+      itemId: String(record.item),
+      itemName: record.itemName,
+      category: record.category,
+      size: record.size,
+      unitsPerBox: record.unitsPerBox,
+      soldBottles: record.soldBottles,
+      sellingPrice: record.sellingPrice,
+      buyingPrice: 0,
+      currentPrice: record.sellingPrice,
+      salesRevenue: record.salesRevenue,
+      openingTotal: record.openingTotal,
+      receivedTotal: record.receivedTotal,
+      closingTotal: record.closingTotal,
+      adjustmentBottles: record.adjustmentBottles,
+      counted: true,
+    });
+  }
   const totalBottles = lines.reduce((sum, line) => sum + line.soldBottles, 0);
   const totalRevenue = roundMoney(lines.reduce((sum, line) => sum + line.salesRevenue, 0));
   const collection = await DailyCollection.findOne({ date }).lean();

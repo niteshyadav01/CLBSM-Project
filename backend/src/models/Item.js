@@ -7,6 +7,7 @@ const itemSchema = new mongoose.Schema(
     category: { type: String, required: true, trim: true, default: 'Liquor' },
     size: { type: String, required: true, trim: true },
     unitsPerBox: { type: Number, required: true, min: 1 },
+    buyingPrice: { type: Number, min: 0, default: 0 },
     sellingPrice: { type: Number, required: true, min: 0 },
     active: { type: Boolean, default: true },
     currentBoxes: { type: Number, default: 0, min: 0 },

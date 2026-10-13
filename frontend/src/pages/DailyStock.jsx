@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { evaluateStock } from '@shared/stockCalculation.js';
 import { api } from '../api/client';
@@ -47,6 +47,27 @@ function previewRow(row) {
   });
 }
 
+function stockCategory(row) {
+  const category = String(row.category || '').trim();
+  const lower = category.toLowerCase();
+  if (!category || lower === 'cold drink' || lower.includes('cold')) return 'Other';
+  return category;
+}
+
+function stockSize(row) {
+  const size = String(row.size || '').toLowerCase().replace(/\s+/g, '');
+  if (size.includes('180')) return '180 ml';
+  if (size.includes('90')) return '90 ml';
+  return '';
+}
+
+function sectionLabel(row) {
+  const category = stockCategory(row);
+  if (category !== 'Liquor') return category;
+  const size = stockSize(row);
+  return size ? `Liquor · ${size}` : 'Liquor';
+}
+
 function ReadCount({ label, value }) {
   return (
     <div className="min-w-0">
@@ -62,6 +83,7 @@ export default function DailyStock() {
   const [params, setParams] = useSearchParams();
   const date = params.get('date') || todayISO();
   const [rows, setRows] = useState([]);
+  const [category, setCategory] = useState('All');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -71,10 +93,20 @@ export default function DailyStock() {
     setError('');
     try {
       const sheet = await api(`/daily-stock?date=${nextDate}`);
-      setRows(
+      setSheet(sheet);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function setSheet(sheet) {
+    setRows(
         sheet.items.map((item) => ({
           itemId: item.itemId,
           name: item.name,
+          category: item.category,
           size: item.size,
           unitsPerBox: item.unitsPerBox,
           sellingPrice: item.sellingPrice,
@@ -91,12 +123,7 @@ export default function DailyStock() {
           closingBoxes: item.entry ? String(item.entry.closingBoxes) : '',
           closingLoose: item.entry ? String(item.entry.closingLoose) : '',
         }))
-      );
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    );
   }
 
   useEffect(() => {
@@ -115,6 +142,26 @@ export default function DailyStock() {
   });
 
   const previews = useMemo(() => rows.map(previewRow), [rows]);
+  const categories = useMemo(() => {
+    const names = new Set(rows.map(stockCategory));
+    const preferred = ['Liquor', 'Other'];
+    return ['All', ...preferred.filter((name) => names.has(name)), ...[...names].filter((name) => !preferred.includes(name)).sort()];
+  }, [rows]);
+  const selectedCategory = categories.includes(category) ? category : 'All';
+  const visible = rows
+    .map((row, index) => ({ row, index, preview: previews[index] }))
+    .filter(({ row }) => selectedCategory === 'All' || stockCategory(row) === selectedCategory);
+  const sectionOrder = ['Liquor · 180 ml', 'Liquor · 90 ml', 'Liquor', 'Other'];
+  const sectionBuckets = new Map();
+  for (const entry of visible) {
+    const label = sectionLabel(entry.row);
+    if (!sectionBuckets.has(label)) sectionBuckets.set(label, []);
+    sectionBuckets.get(label).push(entry);
+  }
+  const sections = [
+    ...sectionOrder.filter((label) => sectionBuckets.has(label)),
+    ...[...sectionBuckets.keys()].filter((label) => !sectionOrder.includes(label)).sort(),
+  ].map((label) => ({ label, entries: sectionBuckets.get(label) }));
   const totals = previews.reduce(
     (sum, preview) => ({
       bottles: sum.bottles + (preview.valid ? preview.soldBottles : 0),
@@ -130,7 +177,7 @@ export default function DailyStock() {
   function copyOpenings() {
     setRows((current) =>
       current.map((row) =>
-        row.firstCount
+        row.firstCount || (selectedCategory !== 'All' && stockCategory(row) !== selectedCategory)
           ? row
           : {
               ...row,
@@ -180,7 +227,8 @@ export default function DailyStock() {
         },
       });
       toast(result.message);
-      await load(date);
+      if (result.sheet) setSheet(result.sheet);
+      else await load(date);
     } catch (err) {
       toast(err.message, 'error');
       if (err.status === 409) load(date);
@@ -214,6 +262,9 @@ export default function DailyStock() {
         description="Enter closing stock once for the day. That closing becomes the next day’s opening. The first count is the starting stock and does not count as a sale."
       >
         <input className="field sm:w-44" aria-label="Stock date" type="date" value={date} onChange={(event) => setParams({ date: event.target.value })} />
+        <select className="field sm:w-44" aria-label="Category" value={selectedCategory} onChange={(event) => setCategory(event.target.value)}>
+          {categories.map((name) => <option key={name} value={name}>{name === 'All' ? 'All categories' : name}</option>)}
+        </select>
         <button className="btn-secondary" type="button" onClick={copyOpenings}>No sales today</button>
         <button className="btn-primary" type="button" onClick={save} disabled={saving || loading}>
           {saving ? 'Saving…' : 'Save closing'}
@@ -224,9 +275,14 @@ export default function DailyStock() {
       {error && <Banner>{error}</Banner>}
       {!loading && !error && rows.length === 0 && <Banner>No active items yet. Add them in Item Master.</Banner>}
 
-      <div className="space-y-3 lg:hidden">
-        {rows.map((row, index) => (
-          <StockCard key={row.itemId} row={row} preview={previews[index]} onChange={(field, value) => update(index, field, value)} onDelete={() => remove(row)} />
+      <div className="space-y-4 lg:hidden">
+        {sections.map((section) => (
+          <section key={section.label} className="space-y-3">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-pine-800">{section.label}</h2>
+            {section.entries.map(({ row, index, preview }) => (
+              <StockCard key={row.itemId} row={row} preview={preview} onChange={(field, value) => update(index, field, value)} onDelete={() => remove(row)} />
+            ))}
+          </section>
         ))}
       </div>
 
@@ -246,9 +302,12 @@ export default function DailyStock() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, index) => {
-                const preview = previews[index];
-                return (
+              {sections.map((section) => (
+                <Fragment key={section.label}>
+                  <tr>
+                    <td className="bg-pine-800 font-bold text-white" colSpan={8}>{section.label}</td>
+                  </tr>
+                  {section.entries.map(({ row, index, preview }) => (
                   <tr key={row.itemId}>
                     <td className="min-w-40">
                       <div className="font-semibold">{row.name}</div>
@@ -284,8 +343,9 @@ export default function DailyStock() {
                     <td className="font-bold tabular-nums">{preview.valid ? formatNumber(preview.soldBottles) : '—'}</td>
                     <td className="font-bold tabular-nums">{preview.valid ? formatINR(preview.salesRevenue) : '—'}</td>
                   </tr>
-                );
-              })}
+                  ))}
+                </Fragment>
+              ))}
             </tbody>
           </table>
         </div>
@@ -295,6 +355,7 @@ export default function DailyStock() {
         <div className="fixed inset-x-3 bottom-[4.75rem] z-20 flex flex-col gap-2 rounded-2xl border border-line bg-white px-3 py-3 shadow-card sm:flex-row sm:items-center sm:justify-between lg:sticky lg:bottom-3 lg:inset-x-auto">
           <div className="text-sm">
             <span className="font-bold">{formatNumber(totals.bottles)} bottles</span>
+            <span className="text-stone-500"> · all items</span>
             <span className="mx-2 text-stone-300">·</span>
             <span className="font-bold">{formatINR(totals.revenue)}</span>
           </div>

@@ -58,6 +58,17 @@ export async function getDashboard(from, to = from) {
     current.revenue = roundMoney(current.revenue + record.salesRevenue);
     salesByItem.set(key, current);
   }
+  for (const item of items) {
+    const key = String(item._id);
+    if (salesByItem.has(key)) continue;
+    salesByItem.set(key, {
+      itemId: key,
+      name: item.name,
+      size: item.size,
+      soldBottles: 0,
+      revenue: 0,
+    });
+  }
 
   const activity = await AuditLog.find().sort({ createdAt: -1 }).limit(8).lean();
 

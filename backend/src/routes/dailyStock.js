@@ -20,9 +20,11 @@ router.put(
   requireRoles('admin', 'manager', 'staff'),
   asyncHandler(async (req, res) => {
     const result = await saveDailyStock({ date: req.body.date, entries: req.body.entries, user: req.user });
+    const sheet = await getDailyStockSheet(req.body.date);
     res.json({
       message: `Stock saved for ${formatDisplayDate(req.body.date)}.`,
       warnings: result.warnings,
+      sheet,
     });
   })
 );

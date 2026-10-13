@@ -22,6 +22,7 @@ export const itemSchema = z.object({
   category: z.string().trim().min(1).max(40).default('Liquor'),
   size: z.string().trim().min(1, 'Enter the bottle size.').max(40),
   unitsPerBox: z.number().int().min(1, 'Units per box must be at least 1.').max(10000),
+  buyingPrice: money.optional(),
   sellingPrice: money,
   active: z.boolean().optional(),
 });

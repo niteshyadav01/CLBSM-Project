@@ -6,7 +6,10 @@ import { useConfirm } from '../context/ConfirmContext';
 import { useToast } from '../context/ToastContext';
 import { formatINR, formatNumber } from '../utils/format';
 
-const emptyForm = { name: '', category: 'Liquor', size: '', unitsPerBox: 48, sellingPrice: '', active: true };
+const CATEGORIES = ['Liquor', 'Other'];
+const LIQUOR_SIZES = ['180 ml', '90 ml'];
+
+const emptyForm = { name: '', category: 'Liquor', size: '180 ml', unitsPerBox: 48, buyingPrice: '', sellingPrice: '', active: true };
 
 export default function Items() {
   const { user } = useAuth();
@@ -42,9 +45,10 @@ export default function Items() {
     event.preventDefault();
     const body = {
       name: form.name,
-      category: form.category,
+      category: form.category === 'Cold drink' ? 'Other' : form.category,
       size: form.size,
       unitsPerBox: Number(form.unitsPerBox),
+      buyingPrice: Number(form.buyingPrice),
       sellingPrice: Number(form.sellingPrice),
       active: form.active,
     };
@@ -78,7 +82,7 @@ export default function Items() {
 
   return (
     <div>
-      <PageHeader title="Item Master" description="Bottle price, pack size, and whether the item is in daily use. Price changes apply to new entries only.">
+      <PageHeader title="Item Master" description="Each item has a buying price and a selling price. Selling-price changes apply to new entries only.">
         <input className="field sm:w-52" placeholder="Search items" value={search} onChange={(event) => setSearch(event.target.value)} />
         {canEdit && (
           <button className="btn-primary" type="button" onClick={() => setForm(emptyForm)}>
@@ -104,7 +108,8 @@ export default function Items() {
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div><div className="text-xs text-stone-500">Per box</div><div className="font-semibold">{formatNumber(item.unitsPerBox)}</div></div>
-                  <div><div className="text-xs text-stone-500">Bottle price</div><div className="font-semibold">{formatINR(item.sellingPrice)}</div></div>
+                  <div><div className="text-xs text-stone-500">Buying price</div><div className="font-semibold">{formatINR(item.buyingPrice ?? 0)}</div></div>
+                  <div><div className="text-xs text-stone-500">Selling price</div><div className="font-semibold">{formatINR(item.sellingPrice)}</div></div>
                 </div>
                 {canEdit && (
                   <div className="mt-3 grid grid-cols-2 gap-2">
@@ -123,7 +128,8 @@ export default function Items() {
                   <th>Category</th>
                   <th>Size</th>
                   <th>Per box</th>
-                  <th>Bottle price</th>
+                  <th>Buying price</th>
+                  <th>Selling price</th>
                   <th>Status</th>
                   {canEdit && <th />}
                 </tr>
@@ -135,6 +141,7 @@ export default function Items() {
                     <td>{item.category}</td>
                     <td>{item.size}</td>
                     <td>{formatNumber(item.unitsPerBox)}</td>
+                    <td>{formatINR(item.buyingPrice ?? 0)}</td>
                     <td>{formatINR(item.sellingPrice)}</td>
                     <td>
                       <span className={item.active ? 'rounded-full bg-pine-50 px-2 py-1 text-xs font-bold text-pine-800' : 'rounded-full bg-stone-100 px-2 py-1 text-xs font-bold text-stone-500'}>
@@ -160,11 +167,28 @@ export default function Items() {
         <Modal title={form.id ? 'Edit item' : 'Add item'} onClose={() => setForm(null)}>
           <form className="space-y-3" onSubmit={save}>
             <label className="block text-sm font-semibold">Name<input className="field mt-1" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required /></label>
-            <label className="block text-sm font-semibold">Category<input className="field mt-1" value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} required /></label>
-            <label className="block text-sm font-semibold">Size<input className="field mt-1" value={form.size} onChange={(event) => setForm({ ...form, size: event.target.value })} placeholder="180 ml" required /></label>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="block text-sm font-semibold">Units per box<input className="field mt-1" inputMode="numeric" value={form.unitsPerBox} onChange={(event) => setForm({ ...form, unitsPerBox: event.target.value.replace(/[^\d]/g, '') })} required /></label>
-              <label className="block text-sm font-semibold">Price per bottle (₹)<input className="field mt-1" inputMode="decimal" value={form.sellingPrice} onChange={(event) => setForm({ ...form, sellingPrice: event.target.value })} required /></label>
+              <label className="block text-sm font-semibold">
+                Category
+                <select className="field mt-1" value={form.category === 'Cold drink' ? 'Other' : (CATEGORIES.includes(form.category) ? form.category : 'Liquor')} onChange={(event) => setForm({ ...form, category: event.target.value, size: event.target.value === 'Other' ? form.size : (LIQUOR_SIZES.includes(form.size) ? form.size : '180 ml') })}>
+                  {CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+                </select>
+              </label>
+              <label className="block text-sm font-semibold">
+                Size
+                {form.category === 'Other' || form.category === 'Cold drink' ? (
+                  <input className="field mt-1" value={form.size} onChange={(event) => setForm({ ...form, size: event.target.value })} placeholder="250 ml" required />
+                ) : (
+                  <select className="field mt-1" value={LIQUOR_SIZES.includes(form.size) ? form.size : '180 ml'} onChange={(event) => setForm({ ...form, size: event.target.value, unitsPerBox: event.target.value === '90 ml' ? 100 : 48 })}>
+                    {LIQUOR_SIZES.map((size) => <option key={size}>{size}</option>)}
+                  </select>
+                )}
+              </label>
+            </div>
+            <label className="block text-sm font-semibold">Units per box<input className="field mt-1" inputMode="numeric" value={form.unitsPerBox} onChange={(event) => setForm({ ...form, unitsPerBox: event.target.value.replace(/[^\d]/g, '') })} required /></label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-sm font-semibold">Buying price per bottle (₹)<input className="field mt-1" type="number" min="0" step="0.01" inputMode="decimal" value={form.buyingPrice ?? ''} onChange={(event) => setForm({ ...form, buyingPrice: event.target.value })} required /></label>
+              <label className="block text-sm font-semibold">Selling price per bottle (₹)<input className="field mt-1" type="number" min="0" step="0.01" inputMode="decimal" value={form.sellingPrice} onChange={(event) => setForm({ ...form, sellingPrice: event.target.value })} required /></label>
             </div>
             <button className="btn-primary" type="submit">Save item</button>
           </form>

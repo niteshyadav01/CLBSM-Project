@@ -20,6 +20,99 @@ function assertObjectId(id) {
   if (!mongoose.isValidObjectId(id)) throw new AppError('That record could not be found.', 404, 'NOT_FOUND');
 }
 
+function groupByItem(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const key = String(row.item);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(row);
+  }
+  return grouped;
+}
+
+function latestBefore(stocks, date) {
+  let best = null;
+  for (const stock of stocks) {
+    if (stock.date < date && (!best || stock.date > best.date)) best = stock;
+  }
+  return best;
+}
+
+function earliestAfter(stocks, date) {
+  let best = null;
+  for (const stock of stocks) {
+    if (stock.date > date && (!best || stock.date < best.date)) best = stock;
+  }
+  return best;
+}
+
+function openingFromHistory(stocks, adjustments, date) {
+  const previous = latestBefore(stocks, date);
+  if (!previous) {
+    let boxes = 0;
+    let loose = 0;
+    for (const adjustment of adjustments) {
+      if (adjustment.date < date) {
+        boxes += adjustment.boxesDelta;
+        loose += adjustment.looseDelta;
+      }
+    }
+    return { boxes, loose, fromDate: null };
+  }
+  let boxes = previous.closingBoxes;
+  let loose = previous.closingLoose;
+  for (const adjustment of adjustments) {
+    if (adjustment.date > previous.date && adjustment.date < date) {
+      boxes += adjustment.boxesDelta;
+      loose += adjustment.looseDelta;
+    }
+  }
+  return { boxes, loose, fromDate: previous.date };
+}
+
+function bottleAdjustments(adjustments, date) {
+  return adjustments.reduce((sum, adjustment) => sum + (adjustment.date === date ? adjustment.bottleDelta : 0), 0);
+}
+
+function onHandFromHistory(stocks, adjustments) {
+  const latest = stocks.reduce((best, stock) => (!best || stock.date > best.date ? stock : best), null);
+  if (!latest) {
+    let boxes = 0;
+    let loose = 0;
+    for (const adjustment of adjustments) {
+      boxes += adjustment.boxesDelta;
+      loose += adjustment.looseDelta;
+    }
+    return { boxes, loose, asOf: null };
+  }
+  let boxes = latest.closingBoxes;
+  let loose = latest.closingLoose;
+  for (const adjustment of adjustments) {
+    if (adjustment.date > latest.date) {
+      boxes += adjustment.boxesDelta;
+      loose += adjustment.looseDelta;
+    }
+  }
+  return { boxes, loose, asOf: latest.date };
+}
+
+async function latestClosingsBefore(itemIds, date) {
+  if (!itemIds.length) return new Map();
+  const rows = await DailyStock.aggregate([
+    { $match: { item: { $in: itemIds }, date: { $lt: date } } },
+    { $sort: { item: 1, date: -1 } },
+    {
+      $group: {
+        _id: '$item',
+        date: { $first: '$date' },
+        closingBoxes: { $first: '$closingBoxes' },
+        closingLoose: { $first: '$closingLoose' },
+      },
+    },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), row]));
+}
+
 async function openingSuggestion(itemId, date, session) {
   const expected = await expectedOpening(itemId, date, session);
   if (expected) return { boxes: expected.boxes, loose: expected.loose, fromDate: expected.date };
@@ -165,19 +258,47 @@ export async function saveDailyStock({ date, entries, user }) {
 
     const items = await q(Item.find({ _id: { $in: itemIds } }), session);
     const itemMap = new Map(items.map((item) => [String(item._id), item]));
-    const existingList = await q(DailyStock.find({ date: data.date, item: { $in: itemIds } }), session);
-    const existingMap = new Map(existingList.map((record) => [String(record.item), record]));
+    const history = await q(DailyStock.find({ item: { $in: itemIds } }).lean(), session);
+    const adjustmentRows = await q(StockAdjustment.find({ item: { $in: itemIds } }).lean(), session);
+    const stocksByItem = groupByItem(history);
+    const adjustmentsByItem = groupByItem(adjustmentRows);
+    const existingMap = new Map();
+    for (const record of history) {
+      if (record.date === data.date) existingMap.set(String(record.item), record);
+    }
 
     const prepared = [];
     for (const entry of data.entries) {
       const item = itemMap.get(entry.itemId);
       if (!item) throw new AppError('One of the selected items no longer exists.', 404, 'NOT_FOUND');
+      const stocks = stocksByItem.get(entry.itemId) || [];
+      const adjustments = adjustmentsByItem.get(entry.itemId) || [];
       const existing = existingMap.get(entry.itemId) || null;
       if (!item.active && !existing) throw new AppError(`${item.name} is inactive and cannot be added.`, 400, 'INACTIVE_ITEM');
       assertCanWrite(existing, entry.existingId || null, entry.updatedAt || null);
       const snapshot = resolveSnapshot(existing, item);
-      const adjustmentBottles = await adjustmentBottlesFor(item._id, data.date, session);
-      const ruled = await applyOpeningRule(item._id, data.date, entry, session);
+      const adjustmentBottles = bottleAdjustments(adjustments, data.date);
+      const previous = latestBefore(stocks, data.date);
+      let ruled;
+      if (!previous) {
+        ruled = {
+          openingBoxes: entry.closingBoxes,
+          openingLoose: entry.closingLoose,
+          receivedBoxes: 0,
+          receivedLoose: 0,
+        };
+      } else {
+        const expected = openingFromHistory(stocks, adjustments, data.date);
+        if (expected.boxes < 0 || expected.loose < 0) {
+          throw new AppError('Opening stock would be negative. Check the previous closing and any adjustments.', 400, 'NEGATIVE_STOCK');
+        }
+        ruled = {
+          openingBoxes: expected.boxes,
+          openingLoose: expected.loose,
+          receivedBoxes: entry.receivedBoxes,
+          receivedLoose: entry.receivedLoose,
+        };
+      }
       const normalized = {
         ...entry,
         openingBoxes: ruled.openingBoxes,
@@ -202,24 +323,90 @@ export async function saveDailyStock({ date, entries, user }) {
           errors: evaluated.errors,
         });
       }
-      prepared.push({ entry: normalized, item, existing, snapshot, evaluated });
+      prepared.push({ entry: normalized, item, existing, snapshot, evaluated, stocks, adjustments });
     }
 
-    const saved = [];
+    const now = new Date();
+    const stockWrites = [];
+    const itemWrites = [];
     for (const row of prepared) {
       const payload = payloadFrom({ ...row, user, date: data.date });
-      let savedDoc;
+      payload.updatedAt = now;
+      const savedRecord = { ...(row.existing || {}), ...payload };
+      const index = row.stocks.findIndex((stock) => stock.date === data.date);
+      if (index >= 0) row.stocks[index] = savedRecord;
+      else row.stocks.push(savedRecord);
+
       if (row.existing) {
-        Object.assign(row.existing, payload);
-        await row.existing.save(session ? { session } : undefined);
-        savedDoc = row.existing;
+        stockWrites.push({ updateOne: { filter: { _id: row.existing._id }, update: { $set: payload } } });
       } else {
-        savedDoc = await insert(DailyStock, payload, session);
+        payload.createdAt = now;
+        stockWrites.push({ insertOne: { document: payload } });
       }
-      saved.push(savedDoc);
-      await refreshNextOpening(row.item._id, data.date, session);
-      await recalculateCurrentStock(row.item, session);
+
+      const next = earliestAfter(row.stocks, data.date);
+      if (next) {
+        const previous = latestBefore(row.stocks, next.date);
+        if (!previous) {
+          next.openingBoxes = next.closingBoxes;
+          next.openingLoose = next.closingLoose;
+          next.receivedBoxes = 0;
+          next.receivedLoose = 0;
+        } else {
+          const expected = openingFromHistory(row.stocks, row.adjustments, next.date);
+          if (expected.boxes < 0 || expected.loose < 0) {
+            throw new AppError(`${next.itemName}: the next day’s opening would be negative.`, 400, 'NEGATIVE_STOCK');
+          }
+          next.openingBoxes = expected.boxes;
+          next.openingLoose = expected.loose;
+        }
+        const evaluated = evaluateStock({
+          openingBoxes: next.openingBoxes,
+          openingLoose: next.openingLoose,
+          receivedBoxes: next.receivedBoxes,
+          receivedLoose: next.receivedLoose,
+          closingBoxes: next.closingBoxes,
+          closingLoose: next.closingLoose,
+          unitsPerBox: next.unitsPerBox,
+          sellingPrice: next.sellingPrice,
+          adjustmentBottles: bottleAdjustments(row.adjustments, next.date),
+        });
+        if (!evaluated.valid) {
+          throw new AppError(`${next.itemName}: ${evaluated.errors[0].message}`, 400, evaluated.errors[0].code, evaluated.errors[0]);
+        }
+        const nextUpdate = {
+          openingBoxes: next.openingBoxes,
+          openingLoose: next.openingLoose,
+          receivedBoxes: next.receivedBoxes,
+          receivedLoose: next.receivedLoose,
+          adjustmentBottles: evaluated.adjustmentBottles,
+          openingTotal: evaluated.openingTotal,
+          receivedTotal: evaluated.receivedTotal,
+          closingTotal: evaluated.closingTotal,
+          availableTotal: evaluated.available,
+          soldBottles: evaluated.soldBottles,
+          salesRevenue: evaluated.salesRevenue,
+          flags: evaluated.warnings.map((warning) => warning.code),
+          updatedAt: now,
+        };
+        stockWrites.push({ updateOne: { filter: { _id: next._id }, update: { $set: nextUpdate } } });
+      }
+
+      const onHand = onHandFromHistory(row.stocks, row.adjustments);
+      if (onHand.boxes < 0 || onHand.loose < 0) {
+        throw new AppError(`${row.item.name} would have negative stock. Check the adjustment and the daily counts.`, 400, 'NEGATIVE_STOCK');
+      }
+      itemWrites.push({
+        updateOne: {
+          filter: { _id: row.item._id },
+          update: { $set: { currentBoxes: onHand.boxes, currentLoose: onHand.loose, stockAsOfDate: onHand.asOf } },
+        },
+      });
     }
+
+    const writeOptions = session ? { session } : {};
+    if (stockWrites.length) await DailyStock.bulkWrite(stockWrites, writeOptions);
+    if (itemWrites.length) await Item.bulkWrite(itemWrites, writeOptions);
 
     const soldBottles = prepared.reduce((sum, row) => sum + row.evaluated.soldBottles, 0);
     const salesRevenue = prepared.reduce((sum, row) => sum + row.evaluated.salesRevenue, 0);
@@ -236,7 +423,6 @@ export async function saveDailyStock({ date, entries, user }) {
     );
 
     return {
-      entries: saved,
       warnings: prepared.flatMap((row) =>
         row.evaluated.warnings.map((warning) => ({
           itemId: String(row.item._id),
@@ -424,16 +610,26 @@ export async function getDailyStockSheet(date) {
   const entries = await DailyStock.find({ date }).lean();
   const enteredIds = entries.map((entry) => entry.item);
   const items = await Item.find({ $or: [{ active: true }, { _id: { $in: enteredIds } }] }).sort({ name: 1 }).lean();
+  const itemIds = items.map((item) => item._id);
   const entryMap = new Map(entries.map((entry) => [String(entry.item), entry]));
-  const adjustments = await StockAdjustment.find({ date, item: { $in: items.map((item) => item._id) } })
-    .sort({ createdAt: 1 })
-    .lean();
+  const [previousClosings, adjustmentRows] = await Promise.all([
+    latestClosingsBefore(itemIds, date),
+    itemIds.length
+      ? StockAdjustment.find({ item: { $in: itemIds }, date: { $lte: date } }).sort({ createdAt: 1 }).lean()
+      : [],
+  ]);
+  const adjustmentsByItem = groupByItem(adjustmentRows);
 
   const rows = [];
   for (const item of items) {
     const entry = entryMap.get(String(item._id)) || null;
-    const suggestion = await openingSuggestion(item._id, date);
-    const itemAdjustments = adjustments.filter((adjustment) => String(adjustment.item) === String(item._id));
+    const historyAdjustments = adjustmentsByItem.get(String(item._id)) || [];
+    const itemAdjustments = historyAdjustments.filter((adjustment) => adjustment.date === date);
+    const suggestion = openingFromHistory(
+      previousClosings.has(String(item._id)) ? [previousClosings.get(String(item._id))] : [],
+      historyAdjustments,
+      date
+    );
     const unitsPerBox = entry?.unitsPerBox || item.unitsPerBox;
     const sellingPrice = entry?.sellingPrice ?? item.sellingPrice;
     rows.push({

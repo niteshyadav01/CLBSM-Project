@@ -79,9 +79,11 @@ describe('persisted stock, roles, and historical prices', () => {
       category: 'Liquor',
       size: '180 ml',
       unitsPerBox: 48,
+      buyingPrice: 75,
       sellingPrice: 100,
     });
     assert.equal(created.status, 201);
+    assert.equal(created.body.item.buyingPrice, 75);
     item = created.body.item;
   });
 
@@ -203,9 +205,11 @@ describe('persisted stock, roles, and historical prices', () => {
       category: 'Liquor',
       size: '180 ml',
       unitsPerBox: 48,
+      buyingPrice: 80,
       sellingPrice: 180,
     });
     assert.equal(updated.status, 200);
+    assert.equal(updated.body.item.buyingPrice, 80);
     const sales = await request(app).get('/api/sales?date=2026-01-16').set('Authorization', `Bearer ${adminToken}`);
     assert.equal(sales.body.lines[0].sellingPrice, 100);
     assert.equal(sales.body.lines[0].salesRevenue, 4800);

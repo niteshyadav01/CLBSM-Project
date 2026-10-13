@@ -14,6 +14,7 @@ function publicItem(item) {
     category: item.category,
     size: item.size,
     unitsPerBox: item.unitsPerBox,
+    buyingPrice: item.buyingPrice ?? 0,
     sellingPrice: item.sellingPrice,
     active: item.active,
     currentBoxes: item.currentBoxes,
@@ -41,9 +42,11 @@ export async function listItems({ search = '', includeInactive = true } = {}) {
 export async function createItem(body, user) {
   const data = parseOrThrow(itemSchema, body);
   if (!isMoney(data.sellingPrice)) throw new AppError('Enter a valid selling price.', 400, 'VALIDATION');
+  if (!isMoney(data.buyingPrice ?? 0)) throw new AppError('Enter a valid buying price.', 400, 'VALIDATION');
   await assertUniqueName(data.name);
   const item = await Item.create({
     ...data,
+    buyingPrice: data.buyingPrice ?? 0,
     nameKey: data.name.toLowerCase(),
     active: data.active !== false,
     createdBy: user.id,
@@ -70,16 +73,19 @@ export async function createItem(body, user) {
 export async function updateItem(id, body, user) {
   const data = parseOrThrow(itemSchema, body);
   if (!isMoney(data.sellingPrice)) throw new AppError('Enter a valid selling price.', 400, 'VALIDATION');
+  if (data.buyingPrice != null && !isMoney(data.buyingPrice)) throw new AppError('Enter a valid buying price.', 400, 'VALIDATION');
   const item = await Item.findById(id);
   if (!item) throw new AppError('Item not found.', 404, 'NOT_FOUND');
   await assertUniqueName(data.name, item._id);
   const previousPrice = item.sellingPrice;
+  const previousBuyingPrice = item.buyingPrice ?? 0;
   const previousUnits = item.unitsPerBox;
   item.name = data.name;
   item.nameKey = data.name.toLowerCase();
   item.category = data.category;
   item.size = data.size;
   item.unitsPerBox = data.unitsPerBox;
+  if (data.buyingPrice != null) item.buyingPrice = data.buyingPrice;
   item.sellingPrice = data.sellingPrice;
   if (data.active != null) item.active = data.active;
   await item.save();
@@ -103,6 +109,16 @@ export async function updateItem(id, body, user) {
       details: { previousPrice, price: item.sellingPrice },
     });
   }
+  if (previousBuyingPrice !== item.buyingPrice) {
+    await logAudit({
+      user,
+      action: 'BUYING_PRICE_CHANGE',
+      entity: 'Item',
+      entityId: item._id,
+      summary: `Changed ${item.name} buying price from ₹${previousBuyingPrice} to ₹${item.buyingPrice}.`,
+      details: { previousBuyingPrice, buyingPrice: item.buyingPrice },
+    });
+  }
   if (previousUnits !== item.unitsPerBox) {
     await logAudit({
       user,
@@ -111,7 +127,7 @@ export async function updateItem(id, body, user) {
       entityId: item._id,
       summary: `Changed ${item.name} units per box from ${previousUnits} to ${item.unitsPerBox}. Saved days keep their original pack size.`,
     });
-  } else if (previousPrice === item.sellingPrice) {
+  } else if (previousPrice === item.sellingPrice && previousBuyingPrice === item.buyingPrice) {
     await logAudit({
       user,
       action: 'ITEM_UPDATE',

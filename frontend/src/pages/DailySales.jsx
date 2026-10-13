@@ -12,6 +12,57 @@ function amount(value) {
   return Math.round((number + Number.EPSILON) * 100) / 100;
 }
 
+function moneySum(rows) {
+  return Math.round((rows.reduce((sum, line) => sum + line.salesRevenue, 0) + Number.EPSILON) * 100) / 100;
+}
+
+function categoryName(line) {
+  const category = String(line.category || '').trim();
+  const lower = category.toLowerCase();
+  if (!category || lower === 'cold drink' || lower.includes('cold')) return 'Other';
+  return category;
+}
+
+function sizeName(line) {
+  const size = String(line.size || '').toLowerCase().replace(/\s+/g, '');
+  if (size.includes('180')) return '180 ml';
+  if (size.includes('90')) return '90 ml';
+  return '';
+}
+
+function groupLines(lines) {
+  const buckets = new Map();
+  for (const line of lines) {
+    const label = categoryName(line);
+    if (!buckets.has(label)) buckets.set(label, []);
+    buckets.get(label).push(line);
+  }
+  const preferred = ['Liquor', 'Other'];
+  const labels = [
+    ...preferred.filter((label) => buckets.has(label)),
+    ...[...buckets.keys()].filter((label) => !preferred.includes(label)).sort(),
+  ];
+  return labels.map((label) => {
+    const rows = buckets.get(label);
+    const bands = label === 'Liquor'
+      ? ['180 ml', '90 ml', ''].map((band) => ({
+        label: band || 'Other sizes',
+        rows: rows.filter((line) => sizeName(line) === band),
+      })).filter((band) => band.rows.length > 0)
+      : [{ label: '', rows }];
+    return {
+      label,
+      bottles: rows.reduce((sum, line) => sum + line.soldBottles, 0),
+      revenue: moneySum(rows),
+      bands: bands.map((band) => ({
+        ...band,
+        bottles: band.rows.reduce((sum, line) => sum + line.soldBottles, 0),
+        revenue: moneySum(band.rows),
+      })),
+    };
+  });
+}
+
 export default function DailySales() {
   const { user } = useAuth();
   const toast = useToast();
@@ -69,11 +120,12 @@ export default function DailySales() {
   const expense = amount(form.expense);
   const upi = amount(form.upi);
   const sales = data?.totalRevenue || 0;
+  const groups = data ? groupLines(data.lines) : [];
   const afterExpense = Math.round((sales - expense + Number.EPSILON) * 100) / 100;
   const afterUpiAndExpense = Math.round((sales - upi - expense + Number.EPSILON) * 100) / 100;
   return (
     <div>
-      <PageHeader title="Daily sales" description="Bottles sold and revenue are calculated from the stock entry. Record what was actually collected beside it.">
+      <PageHeader title="Daily sales" description="Sales are split by category. Liquor is split again into 180 ml and 90 ml.">
         <input className="field sm:w-44" aria-label="Sales date" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
       </PageHeader>
       {state.loading && <Spinner label="Loading sales" />}
@@ -98,42 +150,62 @@ export default function DailySales() {
             </article>
           </section>
           <div className="grid gap-4 xl:grid-cols-3">
-          <div className="card xl:col-span-2">
-            <div className="table-wrap">
-              <table className="grid-table">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Sold</th>
-                    <th>Price</th>
-                    <th>Revenue</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.lines.map((line) => (
-                    <tr key={line.id}>
-                      <td>
-                        <div className="font-semibold">{line.itemName}</div>
-                        <div className="text-xs text-stone-500">{line.size}</div>
-                        {line.currentPrice !== line.sellingPrice && (
-                          <div className="text-xs text-pine-800">Saved price {formatINR(line.sellingPrice)}. Current master price is {formatINR(line.currentPrice)}.</div>
-                        )}
-                      </td>
-                      <td>{formatNumber(line.soldBottles)}</td>
-                      <td>{formatINR(line.sellingPrice)}</td>
-                      <td className="font-semibold">{formatINR(line.salesRevenue)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td className="font-bold">Total</td>
-                    <td className="font-bold">{formatNumber(data.totalBottles)}</td>
-                    <td />
-                    <td className="font-bold">{formatINR(data.totalRevenue)}</td>
-                  </tr>
-                </tfoot>
-              </table>
+          <div className="space-y-4 xl:col-span-2">
+            {groups.map((group) => (
+              <section key={group.label} className="card overflow-hidden">
+                <div className="flex items-center justify-between gap-3 bg-pine-800 px-4 py-3 text-white">
+                  <h2 className="font-bold">{group.label}</h2>
+                  <div className="text-right text-sm">
+                    <div className="font-bold">{formatINR(group.revenue)}</div>
+                    <div className="text-xs text-pine-100">{formatNumber(group.bottles)} bottles</div>
+                  </div>
+                </div>
+                {group.bands.map((band) => (
+                  <div key={band.label || 'items'}>
+                    {band.label && (
+                      <div className="flex items-center justify-between gap-3 border-b border-line bg-paper px-4 py-2 text-sm">
+                        <div className="font-bold">{band.label}</div>
+                        <div className="text-stone-500">{formatNumber(band.bottles)} · {formatINR(band.revenue)}</div>
+                      </div>
+                    )}
+                    <div className="table-wrap">
+                      <table className="grid-table">
+                        <thead>
+                          <tr>
+                            <th>Item</th>
+                            <th>Sold</th>
+                            <th>Price</th>
+                            <th>Revenue</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {band.rows.map((line) => (
+                            <tr key={line.id}>
+                              <td>
+                                <div className="font-semibold">{line.itemName}</div>
+                                <div className="text-xs text-stone-500">{line.size}</div>
+                                {line.currentPrice !== line.sellingPrice && (
+                                  <div className="text-xs text-pine-800">Saved price {formatINR(line.sellingPrice)}. Current master price is {formatINR(line.currentPrice)}.</div>
+                                )}
+                              </td>
+                              <td>{formatNumber(line.soldBottles)}</td>
+                              <td>{formatINR(line.sellingPrice)}</td>
+                              <td className="font-semibold">{formatINR(line.salesRevenue)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </section>
+            ))}
+            <div className="card flex items-center justify-between px-4 py-3">
+              <div className="font-bold">Total</div>
+              <div className="text-right">
+                <div className="font-bold">{formatINR(data.totalRevenue)}</div>
+                <div className="text-xs text-stone-500">{formatNumber(data.totalBottles)} bottles</div>
+              </div>
             </div>
           </div>
           <form className="card h-fit p-4" onSubmit={save}>
