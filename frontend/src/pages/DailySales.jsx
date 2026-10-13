@@ -174,7 +174,7 @@ export default function DailySales() {
                           <tr>
                             <th>Item</th>
                             <th>Sold</th>
-                            <th>Price</th>
+                            <th>Selling price</th>
                             <th>Revenue</th>
                           </tr>
                         </thead>
